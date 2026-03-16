@@ -435,6 +435,14 @@ def scrape_linkedin_jobs(
                 # Get all clickable job cards on this page
                 cards = page.query_selector_all(_CARD_SELECTORS)
                 if not cards:
+                    # Save a debug screenshot to understand what LinkedIn showed
+                    try:
+                        screenshot_path = Path(profile_dir).parent / "debug_screenshot.png"
+                        page.screenshot(path=str(screenshot_path), full_page=True)
+                        logger.info("Debug screenshot saved to %s", screenshot_path)
+                        logger.info("Current URL: %s", page.url)
+                    except Exception:
+                        pass
                     logger.info("No job cards found on page %d — stopping.", page_num)
                     break
 
