@@ -219,35 +219,48 @@ def _extract_detail_from_panel(page, skip_reposted: bool) -> Optional[JobListing
     or if extraction fails.
     """
     try:
-        # Wait for the detail panel to load
+        # Wait for the top card to appear (faster than waiting for full JD)
         page.wait_for_selector(
-            "div.jobs-description__content, div.jobs-description-content, "
-            "div#job-details, section.show-more-less-html",
-            timeout=8000,
+            "div.job-details-jobs-unified-top-card__primary-description-container, "
+            "div.jobs-unified-top-card__content",
+            timeout=5000,
         )
-        _random_delay(0.5, 1.2)
     except Exception:
         logger.info("  → SKIP: detail panel did not load in time.")
         return None
 
+    # --- Fast "reposted" check via Playwright (no full HTML parse) ---
+    if skip_reposted:
+        try:
+            top_el = page.query_selector(
+                "div.job-details-jobs-unified-top-card__primary-description-container, "
+                "div.jobs-unified-top-card__content"
+            )
+            if top_el:
+                top_text = top_el.inner_text().lower()
+                if "reposted" in top_text:
+                    logger.info("  → SKIP: reposted job detected in detail panel.")
+                    return None
+        except Exception:
+            pass
+
+    # --- Job URL from currentJobId query param ---
+    job_url = ""
+    try:
+        parsed = urlparse(page.url)
+        params = parse_qs(parsed.query)
+        job_id = params.get("currentJobId", [None])[0]
+        if job_id:
+            job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
+    except Exception:
+        pass
+    if not job_url:
+        job_url = page.url
+
+    # --- Full HTML parse only for jobs we're keeping ---
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
 
-    # --- Check for "Reposted" in the detail header ---
-    if skip_reposted:
-        # The "Reposted X ago" text appears near the top of the detail panel
-        top_card = soup.select_one(
-            "div.job-details-jobs-unified-top-card__primary-description-container, "
-            "div.jobs-unified-top-card__content, "
-            "div.topcard"
-        )
-        if top_card:
-            top_text = top_card.get_text(" ", strip=True).lower()
-            if "reposted" in top_text:
-                logger.info("  → SKIP: reposted job detected in detail panel.")
-                return None
-
-    # --- Extract fields from the right panel ---
     def _text(selector_group: str) -> str:
         for sel in selector_group.split(", "):
             el = soup.select_one(sel.strip())
@@ -271,20 +284,6 @@ def _extract_detail_from_panel(page, skip_reposted: bool) -> Optional[JobListing
     # Truncate very long descriptions for the email
     if len(description) > 1000:
         description = description[:1000].rsplit(" ", 1)[0] + "…"
-
-    # Job URL — extract currentJobId from the page URL query string
-    job_url = ""
-    try:
-        from urllib.parse import urlparse, parse_qs
-        parsed = urlparse(page.url)
-        params = parse_qs(parsed.query)
-        job_id = params.get("currentJobId", [None])[0]
-        if job_id:
-            job_url = f"https://www.linkedin.com/jobs/view/{job_id}/"
-    except Exception:
-        pass
-    if not job_url:
-        job_url = page.url
 
     if title == "N/A":
         logger.info("  → SKIP: could not extract title (selectors did not match).")
@@ -402,11 +401,19 @@ def scrape_linkedin_jobs(
 
                 _random_delay(0.5, 1.5)
                 try:
-                    page.goto(page_url, wait_until="domcontentloaded")
+                    page.goto(page_url, wait_until="commit", timeout=60000)
                 except Exception as nav_err:
                     logger.warning("Page %d navigation failed: %s — stopping.", page_num, nav_err)
                     break
-                _random_delay(2.0, 4.0)
+                # Wait for job cards or detail panel to appear
+                try:
+                    page.wait_for_selector(
+                        "li.scaffold-layout__list-item, div.jobs-search-no-results",
+                        timeout=15000,
+                    )
+                except Exception:
+                    pass
+                _random_delay(1.0, 2.0)
 
                 # Check if page is still alive
                 if page.is_closed():
@@ -465,7 +472,6 @@ def scrape_linkedin_jobs(
                     # Check card footer labels before clicking (saves time)
                     try:
                         card.scroll_into_view_if_needed()
-                        _random_delay(0.2, 0.4)
 
                         # Get the parent li to read footer labels
                         parent_li = card.evaluate_handle(
@@ -485,7 +491,7 @@ def scrape_linkedin_jobs(
                         logger.debug("Could not click card %d — skipping.", i)
                         continue
 
-                    _random_delay(1.0, 2.5)
+                    _random_delay(0.5, 1.0)
 
                     # Extract job details from the right panel
                     job = _extract_detail_from_panel(page, skip_reposted=skip_reposted)
