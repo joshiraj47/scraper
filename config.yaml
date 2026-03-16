@@ -23,13 +23,13 @@ email:
 
 # OpenClaw / browser automation settings
 openclaw:
-  headless: false
+  headless: true
   # Max time (seconds) to wait for page loads
   page_timeout: 30
   # Max number of job listings to extract per run
-  max_jobs: 50
+  max_jobs: 100
   # Max pages to paginate through (LinkedIn shows ~25 jobs/page)
-  max_pages: 3
+  max_pages: 5
   # Skip reposted listings
   skip_reposted: true
   # Skip already-viewed listings
