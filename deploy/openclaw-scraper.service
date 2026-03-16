@@ -1,0 +1,29 @@
+[Unit]
+Description=OpenClaw LinkedIn Job Scraper
+After=network.target
+
+[Service]
+Type=simple
+User=scraper
+Group=scraper
+WorkingDirectory=/opt/openclaw-scraper
+ExecStart=/opt/openclaw-scraper/venv/bin/python main.py --config config.yaml
+Restart=on-failure
+RestartSec=30
+
+# Environment
+EnvironmentFile=/opt/openclaw-scraper/.env
+
+# Logging (stdout/stderr go to journald)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openclaw-scraper
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/openclaw-scraper/logs
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
