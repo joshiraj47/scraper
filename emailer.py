@@ -59,6 +59,9 @@ EMAIL_TEMPLATE = Template("""\
 """)
 
 
+JOBS_PER_EMAIL = 50  # Gmail clips emails >102KB; ~50 jobs keeps it safe
+
+
 def send_job_email(
     jobs: List[JobListing],
     smtp_host: str,
@@ -71,8 +74,8 @@ def send_job_email(
     timestamp: str,
 ) -> bool:
     """
-    Render all job listings into a single HTML email and send it.
-    Returns True on success, False on failure.
+    Render job listings into HTML emails (max 50 jobs each to avoid Gmail clipping).
+    Returns True if all emails sent successfully, False on failure.
     """
     if not jobs:
         logger.info("No jobs to send — skipping email.")
@@ -83,20 +86,8 @@ def send_job_email(
         logger.error("Email password env var '%s' is not set.", password_env)
         return False
 
-    subject = f"{subject_prefix} {len(jobs)} new jobs — {timestamp}"
-
-    html_body = EMAIL_TEMPLATE.render(
-        subject=subject,
-        job_count=len(jobs),
-        timestamp=timestamp,
-        jobs=jobs,
-    )
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg.attach(MIMEText(html_body, "html"))
+    total_jobs = len(jobs)
+    total_parts = (total_jobs + JOBS_PER_EMAIL - 1) // JOBS_PER_EMAIL
 
     try:
         if use_tls:
@@ -105,15 +96,48 @@ def send_job_email(
             server.starttls()
         else:
             server = smtplib.SMTP_SSL(smtp_host, smtp_port)
-
         server.login(sender, password)
-        server.sendmail(sender, [recipient], msg.as_string())
+    except Exception:
+        logger.exception("Failed to connect to SMTP server")
+        return False
+
+    try:
+        for part_idx in range(total_parts):
+            start = part_idx * JOBS_PER_EMAIL
+            end = min(start + JOBS_PER_EMAIL, total_jobs)
+            batch = jobs[start:end]
+
+            if total_parts == 1:
+                subject = f"{subject_prefix} {total_jobs} new jobs — {timestamp}"
+            else:
+                subject = f"{subject_prefix} {total_jobs} jobs — Part {part_idx + 1}/{total_parts} ({start + 1}–{end}) — {timestamp}"
+
+            html_body = EMAIL_TEMPLATE.render(
+                subject=subject,
+                job_count=total_jobs,
+                timestamp=timestamp,
+                jobs=batch,
+            )
+
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = sender
+            msg["To"] = recipient
+            msg.attach(MIMEText(html_body, "html"))
+
+            server.sendmail(sender, [recipient], msg.as_string())
+            logger.info("Email part %d/%d sent to %s (%d jobs)",
+                        part_idx + 1, total_parts, recipient, len(batch))
+
         server.quit()
-        logger.info("Email sent to %s (%d jobs)", recipient, len(jobs))
         return True
 
     except Exception:
         logger.exception("Failed to send email")
+        try:
+            server.quit()
+        except Exception:
+            pass
         return False
 
 
