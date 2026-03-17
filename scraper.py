@@ -9,10 +9,12 @@ reuse the saved cookies/session.
 
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import urlparse, parse_qs
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright, BrowserContext
@@ -37,7 +39,9 @@ class JobListing:
     company: str
     location: str
     description: str
+    description_html: str
     job_url: str
+    apply_url: str = ""
     posted_time: str = ""
 
 
@@ -138,7 +142,7 @@ def _build_page_url(base_url: str, page: int) -> str:
     Append or update the ``start`` query parameter for pagination.
     Page 1 → start=0, Page 2 → start=25, etc.
     """
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    from urllib.parse import urlencode, urlunparse
 
     parsed = urlparse(base_url)
     params = parse_qs(parsed.query)
@@ -271,19 +275,50 @@ def _extract_detail_from_panel(page, skip_reposted: bool) -> Optional[JobListing
     title = _text(_DETAIL_SELECTORS["title"])
     company = _text(_DETAIL_SELECTORS["company"])
     location = _text(_DETAIL_SELECTORS["location"])
-    posted_time = _text(_DETAIL_SELECTORS["posted_time"])
 
-    # Description — get the full text from "About the job" section
+    # Posted time — extract "X ago" from primary description area
+    posted_time = ""
+    primary_desc = soup.select_one(
+        "div.job-details-jobs-unified-top-card__primary-description-container"
+    )
+    if primary_desc:
+        desc_text = primary_desc.get_text(" ", strip=True)
+        ago_match = re.search(r'(\d+\s+\w+\s+ago)', desc_text)
+        if ago_match:
+            posted_time = ago_match.group(1)
+    if not posted_time:
+        posted_time = _text(_DETAIL_SELECTORS["posted_time"])
+
+    # Description — preserve inner HTML for formatted email
     description = ""
+    description_html = ""
     for sel in _DETAIL_SELECTORS["description"].split(", "):
         desc_el = soup.select_one(sel.strip())
         if desc_el:
             description = desc_el.get_text("\n", strip=True)
+            # Clean up the inner HTML: remove LinkedIn tracking attrs
+            for tag in desc_el.find_all(True):
+                tag.attrs = {k: v for k, v in tag.attrs.items()
+                             if k in ('href', 'src', 'alt')}
+            description_html = str(desc_el)
             break
 
-    # Truncate very long descriptions for the email
-    if len(description) > 1000:
-        description = description[:1000].rsplit(" ", 1)[0] + "…"
+    # Apply URL — try external apply link, fallback to job URL
+    apply_url = ""
+    try:
+        apply_el = page.query_selector(
+            "button.jobs-apply-button, "
+            "a.jobs-apply-button"
+        )
+        if apply_el:
+            # External apply buttons are <a> tags with href
+            tag_name = apply_el.evaluate("el => el.tagName.toLowerCase()")
+            if tag_name == "a":
+                apply_url = apply_el.get_attribute("href") or ""
+    except Exception:
+        pass
+    if not apply_url:
+        apply_url = job_url
 
     if title == "N/A":
         logger.info("  → SKIP: could not extract title (selectors did not match).")
@@ -294,7 +329,9 @@ def _extract_detail_from_panel(page, skip_reposted: bool) -> Optional[JobListing
         company=company,
         location=location,
         description=description,
+        description_html=description_html,
         job_url=job_url,
+        apply_url=apply_url,
         posted_time=posted_time,
     )
 

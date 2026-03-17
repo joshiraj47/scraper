@@ -30,21 +30,41 @@ EMAIL_TEMPLATE = Template("""\
   .job h2 { margin: 0 0 4px; font-size: 16px; }
   .job h2 a { color: #0a66c2; text-decoration: none; }
   .job .meta { color: #666; font-size: 13px; margin-bottom: 6px; }
-  .job .desc { font-size: 13px; color: #444; line-height: 1.5; margin-top: 8px; white-space: pre-line; background: #f9f9f9; padding: 10px 12px; border-radius: 6px; border-left: 3px solid #0a66c2; }
+  .job .meta .time { color: #0a66c2; font-weight: 600; }
+  .job details { margin-top: 8px; }
+  .job details summary { cursor: pointer; font-size: 13px; color: #0a66c2; font-weight: 600; padding: 4px 0; }
+  .job details summary:hover { text-decoration: underline; }
+  .job .desc-content { font-size: 13px; color: #444; line-height: 1.6; margin-top: 8px; background: #f9f9f9; padding: 12px 14px; border-radius: 6px; border-left: 3px solid #0a66c2; }
+  .job .desc-content ul { padding-left: 20px; margin: 6px 0; }
+  .job .desc-content li { margin-bottom: 4px; }
+  .job .desc-content p { margin: 6px 0; }
+  .job .desc-content strong, .job .desc-content b { color: #333; }
   .footer { padding: 16px 24px; text-align: center; font-size: 12px; color: #999; }
+  .page-info { padding: 12px 24px; text-align: center; font-size: 13px; color: #666; background: #f0f4f8; }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
     <h1>{{ subject }}</h1>
-    <p>{{ job_count }} listing{{ 's' if job_count != 1 }} found &middot; {{ timestamp }}</p>
+    <p>{{ total_jobs }} listing{{ 's' if total_jobs != 1 }} found &middot; {{ timestamp }}</p>
   </div>
+  <div class="page-info">Page {{ page_num }} of {{ total_pages }} &middot; Showing jobs {{ start_idx }}&ndash;{{ end_idx }}</div>
   {% for job in jobs %}
   <div class="job">
-    <h2>{% if job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
-    <div class="meta">{{ job.company }} &middot; {{ job.location }}{% if job.posted_time %} &middot; {{ job.posted_time }}{% endif %}</div>
-    {% if job.description %}<div class="desc">{{ job.description }}</div>{% endif %}
+    <h2>{% if job.apply_url %}<a href="{{ job.apply_url }}">{{ job.title }}</a>{% elif job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
+    <div class="meta">{{ job.company }} &middot; {{ job.location }}{% if job.posted_time %} &middot; <span class="time">{{ job.posted_time }}</span>{% endif %}</div>
+    {% if job.description_html %}
+    <details>
+      <summary>View Job Description</summary>
+      <div class="desc-content">{{ job.description_html|safe }}</div>
+    </details>
+    {% elif job.description %}
+    <details>
+      <summary>View Job Description</summary>
+      <div class="desc-content" style="white-space:pre-line;">{{ job.description }}</div>
+    </details>
+    {% endif %}
   </div>
   {% endfor %}
   <div class="footer">Sent by OpenClaw Job Scraper</div>
@@ -52,6 +72,9 @@ EMAIL_TEMPLATE = Template("""\
 </body>
 </html>
 """)
+
+
+JOBS_PER_PAGE = 10
 
 
 def send_job_email(
@@ -66,8 +89,8 @@ def send_job_email(
     timestamp: str,
 ) -> bool:
     """
-    Render job listings into an HTML email and send it.
-    Returns True on success, False on failure.
+    Render job listings into paginated HTML emails (10 jobs per email).
+    Returns True if all emails sent successfully, False otherwise.
     """
     if not jobs:
         logger.info("No jobs to send — skipping email.")
@@ -78,20 +101,9 @@ def send_job_email(
         logger.error("Email password env var '%s' is not set.", password_env)
         return False
 
-    subject = f"{subject_prefix} {len(jobs)} new jobs — {timestamp}"
-
-    html_body = EMAIL_TEMPLATE.render(
-        subject=subject,
-        job_count=len(jobs),
-        timestamp=timestamp,
-        jobs=jobs,
-    )
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = sender
-    msg["To"] = recipient
-    msg.attach(MIMEText(html_body, "html"))
+    total_jobs = len(jobs)
+    total_pages = (total_jobs + JOBS_PER_PAGE - 1) // JOBS_PER_PAGE
+    all_sent = True
 
     try:
         if use_tls:
@@ -100,15 +112,53 @@ def send_job_email(
             server.starttls()
         else:
             server = smtplib.SMTP_SSL(smtp_host, smtp_port)
-
         server.login(sender, password)
-        server.sendmail(sender, [recipient], msg.as_string())
+    except Exception:
+        logger.exception("Failed to connect to SMTP server")
+        return False
+
+    try:
+        for page_idx in range(total_pages):
+            start = page_idx * JOBS_PER_PAGE
+            end = min(start + JOBS_PER_PAGE, total_jobs)
+            page_jobs = jobs[start:end]
+            page_num = page_idx + 1
+
+            if total_pages == 1:
+                subject = f"{subject_prefix} {total_jobs} new jobs — {timestamp}"
+            else:
+                subject = f"{subject_prefix} {total_jobs} jobs — Page {page_num}/{total_pages} — {timestamp}"
+
+            html_body = EMAIL_TEMPLATE.render(
+                subject=subject,
+                total_jobs=total_jobs,
+                timestamp=timestamp,
+                jobs=page_jobs,
+                page_num=page_num,
+                total_pages=total_pages,
+                start_idx=start + 1,
+                end_idx=end,
+            )
+
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = sender
+            msg["To"] = recipient
+            msg.attach(MIMEText(html_body, "html"))
+
+            server.sendmail(sender, [recipient], msg.as_string())
+            logger.info("Email page %d/%d sent to %s (%d jobs)",
+                        page_num, total_pages, recipient, len(page_jobs))
+
         server.quit()
-        logger.info("Email sent to %s", recipient)
         return True
 
     except Exception:
         logger.exception("Failed to send email")
+        try:
+            server.quit()
+        except Exception:
+            pass
         return False
 
 
