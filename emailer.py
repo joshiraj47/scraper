@@ -50,19 +50,8 @@ EMAIL_TEMPLATE = Template("""\
   </div>
   {% for job in jobs %}
   <div class="job">
-    <h2>{% if job.apply_url %}<a href="{{ job.apply_url }}">{{ job.title }}</a>{% elif job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
+    <h2>{% if job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
     <div class="meta">{{ job.company }} &middot; {{ job.location }}{% if job.posted_time %} &middot; <span class="time">{{ job.posted_time }}</span>{% endif %}</div>
-    {% if job.description_html %}
-    <details>
-      <summary>View Job Description</summary>
-      <div class="desc-content">{{ job.description_html|safe }}</div>
-    </details>
-    {% elif job.description %}
-    <details>
-      <summary>View Job Description</summary>
-      <div class="desc-content" style="white-space:pre-line;">{{ job.description }}</div>
-    </details>
-    {% endif %}
   </div>
   {% endfor %}
   <div class="footer">Sent by OpenClaw Job Scraper</div>
