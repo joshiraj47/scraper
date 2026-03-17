@@ -31,14 +31,7 @@ EMAIL_TEMPLATE = Template("""\
   .job h2 a { color: #0a66c2; text-decoration: none; }
   .job .meta { color: #666; font-size: 13px; margin-bottom: 6px; }
   .job .meta .time { color: #0a66c2; font-weight: 600; }
-  .job details { margin-top: 8px; }
-  .job details summary { cursor: pointer; font-size: 13px; color: #0a66c2; font-weight: 600; padding: 4px 0; }
-  .job details summary:hover { text-decoration: underline; }
-  .job .desc-content { font-size: 13px; color: #444; line-height: 1.6; margin-top: 8px; background: #f9f9f9; padding: 12px 14px; border-radius: 6px; border-left: 3px solid #0a66c2; }
-  .job .desc-content ul { padding-left: 20px; margin: 6px 0; }
-  .job .desc-content li { margin-bottom: 4px; }
-  .job .desc-content p { margin: 6px 0; }
-  .job .desc-content strong, .job .desc-content b { color: #333; }
+  .logo { width: 48px; height: 48px; border-radius: 6px; object-fit: contain; background: #f0f0f0; }
   .footer { padding: 16px 24px; text-align: center; font-size: 12px; color: #999; }
 </style>
 </head>
@@ -50,8 +43,13 @@ EMAIL_TEMPLATE = Template("""\
   </div>
   {% for job in jobs %}
   <div class="job">
-    <h2>{% if job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
-    <div class="meta">{{ job.company }} &middot; {{ job.location }}{% if job.posted_time %} &middot; <span class="time">{{ job.posted_time }}</span>{% endif %}</div>
+    <table cellpadding="0" cellspacing="0" border="0"><tr>
+      {% if job.company_logo %}<td style="vertical-align:top;padding-right:12px;"><img class="logo" src="{{ job.company_logo }}" alt=""></td>{% endif %}
+      <td style="vertical-align:top;">
+        <h2>{% if job.job_url %}<a href="{{ job.job_url }}">{{ job.title }}</a>{% else %}{{ job.title }}{% endif %}</h2>
+        <div class="meta">{{ job.company }} &middot; {{ job.location }}{% if job.posted_time %} &middot; <span class="time">{{ job.posted_time }}</span>{% endif %}</div>
+      </td>
+    </tr></table>
   </div>
   {% endfor %}
   <div class="footer">Sent by OpenClaw Job Scraper</div>

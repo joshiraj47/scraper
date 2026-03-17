@@ -43,6 +43,7 @@ class JobListing:
     job_url: str
     apply_url: str = ""
     posted_time: str = ""
+    company_logo: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +524,17 @@ def scrape_linkedin_jobs(
                                 skip_count += 1
                                 continue
 
+                        # Extract company logo from card before clicking
+                        logo_url = ""
+                        try:
+                            logo_img = parent_li.evaluate(
+                                "el => { const img = el.querySelector('img.artdeco-entity-lockup__image, img.ivm-view-attr__img--centered, img[data-delayed-url]'); return img ? (img.src || img.getAttribute('data-delayed-url') || '') : ''; }"
+                            )
+                            if logo_img:
+                                logo_url = logo_img
+                        except Exception:
+                            pass
+
                         card.click()
                     except Exception:
                         logger.debug("Could not click card %d — skipping.", i)
@@ -536,6 +548,8 @@ def scrape_linkedin_jobs(
                     if job is None:
                         skip_count += 1
                         continue
+
+                    job.company_logo = logo_url
 
                     # Deduplicate
                     key = job.job_url or job.title
