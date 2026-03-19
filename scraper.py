@@ -67,6 +67,41 @@ def _human_scroll(page, scrolls: int = 4) -> None:
 # Persistent browser context
 # ---------------------------------------------------------------------------
 
+# JavaScript to mask automation signals (injected before every page load)
+_STEALTH_JS = """
+// Remove webdriver flag
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+// Mock chrome.runtime to look like a real Chrome extension environment
+window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){} };
+
+// Override permissions query
+const originalQuery = window.navigator.permissions.query;
+window.navigator.permissions.query = (parameters) =>
+    parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters);
+
+// Fake plugins array
+Object.defineProperty(navigator, 'plugins', {
+    get: () => [1, 2, 3, 4, 5],
+});
+
+// Fake languages
+Object.defineProperty(navigator, 'languages', {
+    get: () => ['en-US', 'en'],
+});
+
+// Mask headless indicators in WebGL
+const getParameter = WebGLRenderingContext.prototype.getParameter;
+WebGLRenderingContext.prototype.getParameter = function(parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.call(this, parameter);
+};
+"""
+
+
 def _launch_persistent_context(
     pw,
     profile_dir: str,
@@ -76,6 +111,7 @@ def _launch_persistent_context(
     """
     Launch Chromium with a persistent user-data directory.
     Cookies, localStorage, and session data survive across runs.
+    Includes anti-detection measures to avoid bot fingerprinting.
     """
     context = pw.chromium.launch_persistent_context(
         user_data_dir=profile_dir,
@@ -83,15 +119,26 @@ def _launch_persistent_context(
         viewport={"width": 1280, "height": 800},
         user_agent=(
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         ),
         locale="en-US",
         timezone_id="Asia/Kolkata",
         args=[
             "--disable-blink-features=AutomationControlled",
+            "--disable-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-infobars",
+            "--disable-component-update",
+            "--disable-background-networking",
         ],
+        ignore_default_args=["--enable-automation"],
     )
     context.set_default_timeout(page_timeout * 1000)
+
+    # Inject stealth scripts into every page before it loads
+    context.add_init_script(_STEALTH_JS)
+
     return context
 
 
@@ -437,7 +484,7 @@ def scrape_linkedin_jobs(
                 page_url = _build_page_url(job_url, page_num)
                 logger.info("Page %d/%d — %s", page_num, max_pages, page_url)
 
-                _random_delay(0.5, 1.5)
+                _random_delay(2.0, 5.0)  # longer delay between pages to avoid detection
                 try:
                     page.goto(page_url, wait_until="commit", timeout=60000)
                 except Exception as nav_err:
@@ -540,7 +587,7 @@ def scrape_linkedin_jobs(
                         logger.debug("Could not click card %d — skipping.", i)
                         continue
 
-                    _random_delay(0.5, 1.0)
+                    _random_delay(1.0, 2.5)  # human-like pause after clicking a card
 
                     # Extract job details from the right panel
                     job = _extract_detail_from_panel(page, skip_reposted=skip_reposted)
